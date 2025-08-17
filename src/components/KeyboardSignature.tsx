@@ -1,13 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 
 type KeyboardLayout = "qwerty";
-type Key = {
-  x: number;
-  y: number;
-};
+type Key = { x: number; y: number };
+type SegmentStyle = "solid" | "dashed" | "dotted";
 
 const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
   qwerty: {
+    // Numbers row (now at y = -1)
+    "1": { x: 0, y: -1 },
+    "2": { x: 1, y: -1 },
+    "3": { x: 2, y: -1 },
+    "4": { x: 3, y: -1 },
+    "5": { x: 4, y: -1 },
+    "6": { x: 5, y: -1 },
+    "7": { x: 6, y: -1 },
+    "8": { x: 7, y: -1 },
+    "9": { x: 8, y: -1 },
+    "0": { x: 9, y: -1 },
+    _: { x: 10, y: -1 },
+
+    // Q row
     Q: { x: 0.5, y: 0 },
     W: { x: 1.5, y: 0 },
     E: { x: 2.5, y: 0 },
@@ -19,6 +31,7 @@ const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
     O: { x: 8.5, y: 0 },
     P: { x: 9.5, y: 0 },
 
+    // A row
     A: { x: 0.75, y: 1 },
     S: { x: 1.75, y: 1 },
     D: { x: 2.75, y: 1 },
@@ -29,6 +42,7 @@ const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
     K: { x: 7.75, y: 1 },
     L: { x: 8.75, y: 1 },
 
+    // Z row
     Z: { x: 1.25, y: 2 },
     X: { x: 2.25, y: 2 },
     C: { x: 3.25, y: 2 },
@@ -41,70 +55,115 @@ const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
 
 export const KeyboardSignature = () => {
   const [name, setName] = useState("");
-  // TODO: implement multiple keyboard layouts I guess
-  const [currentKeyboardLayout, _setCurrentKeyboardLayout] =
-    useState<KeyboardLayout>("qwerty");
+  const [currentKeyboardLayout] = useState<KeyboardLayout>("qwerty");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
-  // Flash keyboard when name changes
+  // visual constants (keep spacing consistent with your original)
+  const KEY_SPACING = 60; // gap between columns/rows (px)
+  const KEY_W = 56; // Tailwind w-14 -> 56px
+  const KEY_H = 48; // Tailwind h-12 -> 48px
+  const PAD_X = 15; // left/right padding inside the container
+  const PAD_Y = 15; // top/bottom padding inside the container
+
+  const layout = keyboardLayouts[currentKeyboardLayout];
+  const all = Object.values(layout);
+
+  // derive bounds from the layout
+  const minX = Math.min(...all.map((k) => k.x));
+  const maxX = Math.max(...all.map((k) => k.x));
+  const minY = Math.min(...all.map((k) => k.y));
+  const maxY = Math.max(...all.map((k) => k.y));
+
+  // shift keys so the smallest x/y lands at 0, then add padding
+  const SHIFT_X = -minX * KEY_SPACING;
+  const SHIFT_Y = -minY * KEY_SPACING;
+
+  // dynamic container dimensions
+  const WIDTH = (maxX - minX) * KEY_SPACING + KEY_W + PAD_X * 2;
+  const HEIGHT = (maxY - minY) * KEY_SPACING + KEY_H + PAD_Y * 2;
+
   useEffect(() => {
     if (name.length > 0) {
       setKeyboardVisible(true);
-
-      const timer = setTimeout(() => {
-        setKeyboardVisible(false);
-      }, 100);
-
+      const timer = setTimeout(() => setKeyboardVisible(false), 100);
       return () => clearTimeout(timer);
     } else {
       setKeyboardVisible(false);
     }
   }, [name]);
 
-  // Calculate signature path
-  const signaturePath = useMemo(() => {
-    if (!name) return "";
+  // map any character to its key center position (letters share coords A/a)
+  const getKeyCenter = (ch: string) => {
+    if (!ch) return null;
+    const isLetter = /[a-zA-Z]/.test(ch);
+    const key = (isLetter ? ch.toUpperCase() : ch) as keyof typeof layout;
+    if (!(key in layout)) return null;
+    const { x, y } = layout[key];
+    return {
+      x: x * KEY_SPACING + SHIFT_X + PAD_X + KEY_W / 2,
+      y: y * KEY_SPACING + SHIFT_Y + PAD_Y + KEY_H / 2,
+      ch,
+    };
+  };
 
-    const points = [];
+  const classifyStyle = (a: string, b: string): SegmentStyle => {
+    const isNumOrUnd = (c: string) => /[0-9_]/.test(c);
+    const isUpper = (c: string) => /^[A-Z]$/.test(c);
+    const isLower = (c: string) => /^[a-z]$/.test(c);
+    const isLetter = (c: string) => isUpper(c) || isLower(c);
 
-    for (const char of name.toUpperCase()) {
-      if (char in keyboardLayouts[currentKeyboardLayout]) {
-        const { x, y } = keyboardLayouts[currentKeyboardLayout][char];
-        // Adjust coordinates (multiply by 60 for spacing)
-        points.push({ x: x * 60 + 28, y: y * 60 + 40 });
-      }
+    if (isNumOrUnd(a) || isNumOrUnd(b)) return "dotted";
+    if (isLetter(a) && isLetter(b)) {
+      return (isUpper(a) && isUpper(b)) || (isLower(a) && isLower(b))
+        ? "solid"
+        : "dashed";
     }
+    return "solid";
+  };
 
-    if (points.length === 0) return "";
-
-    // SVG path
-    let path = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 1; i < points.length; i++) {
-      path += ` L ${points[i].x} ${points[i].y}`;
+  const segments = useMemo(() => {
+    if (!name) return [] as Array<{ d: string; style: SegmentStyle }>;
+    const centers = name.split("").map(getKeyCenter).filter(Boolean) as Array<{
+      x: number;
+      y: number;
+      ch: string;
+    }>;
+    if (centers.length < 2) return [];
+    const segs: Array<{ d: string; style: SegmentStyle }> = [];
+    for (let i = 1; i < centers.length; i++) {
+      const a = centers[i - 1];
+      const b = centers[i];
+      const style = classifyStyle(a.ch, b.ch);
+      segs.push({ d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, style });
     }
+    return segs;
+  }, [name, SHIFT_X, SHIFT_Y, PAD_X, PAD_Y]);
 
-    return path;
-  }, [name]);
-
-  // Get active keys for highlighting
   const activeKeys = useMemo(() => {
-    return new Set(
-      name
-        .toUpperCase()
-        .split("")
-        .filter((char) => char in keyboardLayouts[currentKeyboardLayout]),
-    );
-  }, [name]);
+    const mapped = name
+      .split("")
+      .map((c) => (/[a-zA-Z]/.test(c) ? c.toUpperCase() : c))
+      .filter((c) => c in layout);
+    return new Set(mapped);
+  }, [name, layout]);
 
-  // Export functions
   const exportSVG = () => {
-    if (!signaturePath || !name) return;
-
-    const svgContent = `<svg width="650" height="200" xmlns="http://www.w3.org/2000/svg">
-          <path d="${signaturePath}" stroke="black" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>`;
-
-    const blob = new Blob([svgContent], { type: "image/svg+xml" });
+    if (segments.length === 0 || !name) return;
+    const mk = (s: { d: string; style: SegmentStyle }) => {
+      const dash =
+        s.style === "dashed"
+          ? ` stroke-dasharray="8 6"`
+          : s.style === "dotted"
+          ? ` stroke-dasharray="1 8"`
+          : "";
+      return `<path d="${s.d}" stroke="black" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"${dash}/>`;
+    };
+    const svg = `<svg width="${Math.ceil(WIDTH)}" height="${Math.ceil(
+      HEIGHT
+    )}" xmlns="http://www.w3.org/2000/svg">
+${segments.map(mk).join("\n")}
+</svg>`;
+    const blob = new Blob([svg], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -114,29 +173,33 @@ export const KeyboardSignature = () => {
   };
 
   const exportPNG = () => {
-    if (!signaturePath || !name) return;
+    if (segments.length === 0 || !name) return;
+    const W = Math.ceil(WIDTH);
+    const H = Math.ceil(HEIGHT);
 
     const canvas = document.createElement("canvas");
-    canvas.width = 1300;
-    canvas.height = 400;
+    // 2x for crisper output
+    canvas.width = W * 2;
+    canvas.height = H * 2;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Higher res
     ctx.scale(2, 2);
-
-    // Background
     ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, 650, 200);
+    ctx.fillRect(0, 0, W, H);
 
-    // Signature path
     ctx.strokeStyle = "white";
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
-    const path = new Path2D(signaturePath);
-    ctx.stroke(path);
+    for (const s of segments) {
+      if (s.style === "solid") ctx.setLineDash([]);
+      else if (s.style === "dashed") ctx.setLineDash([8, 6]);
+      else ctx.setLineDash([1, 8]);
+      const path = new Path2D(s.d);
+      ctx.stroke(path);
+    }
 
     canvas.toBlob((blob) => {
       if (!blob) return;
@@ -168,45 +231,50 @@ export const KeyboardSignature = () => {
             name.length === 0
               ? "opacity-100"
               : keyboardVisible
-                ? "opacity-100 brightness-125 duration-50"
-                : "opacity-0 duration-4000"
+              ? "opacity-100 brightness-125 duration-50"
+              : "opacity-0 duration-4000"
           }`}
-          style={{ width: "650px", height: "200px" }}
+          style={{
+            width: `${Math.ceil(WIDTH)}px`,
+            height: `${Math.ceil(HEIGHT)}px`,
+          }}
         >
-          {Object.entries(keyboardLayouts[currentKeyboardLayout]).map(
-            ([char, pos]) => {
-              const isActive = activeKeys.has(char);
-              const isCurrentKey =
-                name.length > 0 && name.toUpperCase()[name.length - 1] === char;
+          {Object.entries(layout).map(([char, pos]) => {
+            const isActive = activeKeys.has(char);
+            const lastChar = name.slice(-1);
+            const isCurrentKey =
+              lastChar &&
+              (/[a-zA-Z]/.test(lastChar)
+                ? lastChar.toUpperCase()
+                : lastChar) === char;
 
-              return (
-                <div
-                  key={char}
-                  onClick={() => setName((p) => p + char)}
-                  className={`absolute w-14 h-12 rounded-lg border flex items-center justify-center text-sm font-mono transition-all duration-200 active:scale-95 ${
-                    isCurrentKey
-                      ? "bg-white/50 border-neutral-400 text-black shadow-lg shadow-white-500/50 scale-110"
-                      : isActive
-                        ? "bg-neutral-900 border-neutral-800 text-white"
-                        : "bg-transparent border-neutral-800/50 text-neutral-300"
-                  }`}
-                  style={{
-                    left: `${pos.x * 60}px`,
-                    top: `${pos.y * 60 + 15}px`,
-                  }}
-                >
-                  {char}
-                </div>
-              );
-            },
-          )}
+            return (
+              <div
+                key={char}
+                onClick={() => setName((p) => p + char)}
+                className={`absolute w-14 h-12 rounded-lg border flex items-center justify-center text-sm font-mono transition-all duration-200 active:scale-95 ${
+                  isCurrentKey
+                    ? "bg-white/50 border-neutral-400 text-black shadow-lg shadow-white-500/50 scale-110"
+                    : isActive
+                    ? "bg-neutral-900 border-neutral-800 text-white"
+                    : "bg-transparent border-neutral-800/50 text-neutral-300"
+                }`}
+                style={{
+                  left: `${pos.x * KEY_SPACING + SHIFT_X + PAD_X}px`,
+                  top: `${pos.y * KEY_SPACING + SHIFT_Y + PAD_Y}px`,
+                }}
+              >
+                {char}
+              </div>
+            );
+          })}
         </div>
 
         {/* Signature */}
         <svg
           className="pointer-events-none absolute top-0 left-0"
-          width="650"
-          height="200"
+          width={Math.ceil(WIDTH)}
+          height={Math.ceil(HEIGHT)}
           style={{ zIndex: 10 }}
         >
           <title>
@@ -214,21 +282,33 @@ export const KeyboardSignature = () => {
             letters on the keyboard.
           </title>
 
-          {signaturePath ? (
+          {segments.map((s, i) => (
             <path
-              d={signaturePath}
+              key={i}
+              d={s.d}
               stroke="white"
               strokeWidth="3"
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
+              strokeDasharray={
+                s.style === "dashed"
+                  ? "8 6"
+                  : s.style === "dotted"
+                  ? "1 8"
+                  : undefined
+              }
             />
-          ) : null}
+          ))}
         </svg>
       </div>
 
       <div
-        className={`max-sm:w-[20rem] max-sm:mx-auto flex flex-col gap-2 sm:mt-8 transition-all ease-in-out ${name.length > 0 ? "opacity-100 tramslate-y-0 duration-1000" : "opacity-0 translate-y-2 duration-150"}`}
+        className={`max-sm:w-[20rem] max-sm:mx-auto flex flex-col gap-2 sm:mt-8 transition-all ease-in-out ${
+          name.length > 0
+            ? "opacity-100 translate-y-0 duration-1000"
+            : "opacity-0 translate-y-2 duration-150"
+        }`}
       >
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -238,7 +318,6 @@ export const KeyboardSignature = () => {
           >
             Export SVG
           </button>
-
           <button
             type="button"
             onClick={exportPNG}
