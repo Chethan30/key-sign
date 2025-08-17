@@ -58,6 +58,7 @@ export const KeyboardSignature = () => {
   const [currentKeyboardLayout] = useState<KeyboardLayout>("qwerty");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [curved, setCurved] = useState(false);
+  const [capsOn, setCapsOn] = useState(false); // NEW: Caps state
 
   // visual constants
   const KEY_SPACING = 60;
@@ -80,6 +81,21 @@ export const KeyboardSignature = () => {
 
   const WIDTH = (maxX - minX) * KEY_SPACING + KEY_W + PAD_X * 2;
   const HEIGHT = (maxY - minY) * KEY_SPACING + KEY_H + PAD_Y * 2;
+
+  // Track physical CapsLock key
+  useEffect(() => {
+    const syncCaps = (e: KeyboardEvent) => {
+      if (typeof e.getModifierState === "function") {
+        setCapsOn(e.getModifierState("CapsLock"));
+      }
+    };
+    window.addEventListener("keydown", syncCaps);
+    window.addEventListener("keyup", syncCaps);
+    return () => {
+      window.removeEventListener("keydown", syncCaps);
+      window.removeEventListener("keyup", syncCaps);
+    };
+  }, []);
 
   // keyboard flash when name changes
   useEffect(() => {
@@ -114,9 +130,7 @@ export const KeyboardSignature = () => {
 
     if (isNumOrUnd(a) || isNumOrUnd(b)) return "dotted";
     if (isLetter(a) && isLetter(b)) {
-      return (isUpper(a) && isUpper(b)) || (isLower(a) && isLower(b))
-        ? "solid"
-        : "dashed";
+      return isUpper(a) && isUpper(b) ? "solid" : "dashed";
     }
     return "solid";
   };
@@ -141,24 +155,18 @@ export const KeyboardSignature = () => {
       const style = classifyStyle(a.ch, b.ch);
 
       if (!curved) {
-        // straight segment
         segs.push({ d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, style });
       } else {
-        // quadratic segment with a gentle bend based on local turn
         const prev = i - 2 >= 0 ? pts[i - 2] : a;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const len = Math.hypot(dx, dy) || 1;
-        // unit normal to segment
         const nx = -dy / len;
         const ny = dx / len;
-        // turn direction via cross product sign (prev->a) x (a->b)
         const cprod =
           (a.x - prev.x) * (b.y - a.y) - (a.y - prev.y) * (b.x - a.x);
         const sign = cprod === 0 ? 1 : Math.sign(cprod);
-        // base amplitude proportional to segment length, clamped
         const amp = Math.min(12, len * 0.22);
-        // control near the midpoint, offset along normal
         const cx = (a.x + b.x) / 2 + nx * amp * sign;
         const cy = (a.y + b.y) / 2 + ny * amp * sign;
 
@@ -169,6 +177,7 @@ export const KeyboardSignature = () => {
     return segs;
   }, [name, curved, SHIFT_X, SHIFT_Y, PAD_X, PAD_Y]);
 
+  // Active keys (highlight)
   const activeKeys = useMemo(() => {
     const mapped = name
       .split("")
@@ -241,6 +250,16 @@ ${segments.map(mk).join("\n")}
     });
   };
 
+  // Helper to render label & produce the character appended on click
+  const renderKeyLabel = (char: string) => {
+    const isLetter = /^[A-Z]$/.test(char);
+    return isLetter ? (capsOn ? char : char.toLowerCase()) : char;
+  };
+  const clickCharToAppend = (char: string) => {
+    const isLetter = /^[A-Z]$/.test(char);
+    return isLetter ? (capsOn ? char : char.toLowerCase()) : char;
+  };
+
   return (
     <div
       className={`flex flex-col sm:items-center sm:justify-center max-sm:mx-auto max-sm:w-[28rem] sm:w-fit`}
@@ -280,7 +299,7 @@ ${segments.map(mk).join("\n")}
             return (
               <div
                 key={char}
-                onClick={() => setName((p) => p + char)}
+                onClick={() => setName((p) => p + clickCharToAppend(char))}
                 className={`absolute w-14 h-12 rounded-lg border flex items-center justify-center text-sm font-mono transition-all duration-200 active:scale-95 ${
                   isCurrentKey
                     ? "bg-white/50 border-neutral-400 text-black shadow-lg shadow-white-500/50 scale-110"
@@ -293,7 +312,7 @@ ${segments.map(mk).join("\n")}
                   top: `${pos.y * KEY_SPACING + SHIFT_Y + PAD_Y}px`,
                 }}
               >
-                {char}
+                {renderKeyLabel(char)}
               </div>
             );
           })}
@@ -308,7 +327,7 @@ ${segments.map(mk).join("\n")}
         >
           <title>
             A digital signature, created by connecting the points of typed
-            letters on the keyboard.
+            characters on the keyboard.
           </title>
 
           {segments.map((s, i) => (
@@ -340,17 +359,55 @@ ${segments.map(mk).join("\n")}
         }`}
       >
         {/* Controls */}
-        <div className="flex items-center justify-between gap-2">
-          <label className="inline-flex items-center gap-2 text-sm text-neutral-200 select-none">
-            <input
-              type="checkbox"
-              checked={curved}
-              onChange={(e) => setCurved(e.target.checked)}
-              className="h-4 w-4 accent-white cursor-pointer"
-            />
-            Curved lines
-          </label>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          {/* Toggle group */}
+          <div className="flex items-center gap-2">
+            {/* Caps toggle (unchanged style) */}
+            <button
+              type="button"
+              aria-pressed={capsOn}
+              onClick={() => setCapsOn((v) => !v)}
+              className={`px-3.5 py-1.5 rounded-md text-sm font-semibold border transition-all duration-100 ease-out flex items-center gap-2 ${
+                capsOn
+                  ? "bg-white text-black border-white shadow"
+                  : "bg-transparent text-neutral-300 border-neutral-700"
+              }`}
+              title="Toggle Caps"
+            >
+              Caps
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-full ${
+                  capsOn
+                    ? "bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/80"
+                    : "bg-neutral-600"
+                }`}
+              />
+            </button>
 
+            {/* Curves toggle — same style, orange light */}
+            <button
+              type="button"
+              aria-pressed={curved}
+              onClick={() => setCurved((v) => !v)}
+              className={`px-3.5 py-1.5 rounded-md text-sm font-semibold border transition-all duration-100 ease-out flex items-center gap-2 ${
+                curved
+                  ? "bg-white text-black border-white shadow"
+                  : "bg-transparent text-neutral-300 border-neutral-700"
+              }`}
+              title="Toggle Curved Lines"
+            >
+              Curves
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-full ${
+                  curved
+                    ? "bg-amber-400 shadow-[0_0_8px] shadow-amber-400/80"
+                    : "bg-neutral-600"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Export buttons */}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
