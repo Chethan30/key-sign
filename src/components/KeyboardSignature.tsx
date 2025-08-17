@@ -6,7 +6,7 @@ type SegmentStyle = "solid" | "dashed" | "dotted";
 
 const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
   qwerty: {
-    // Numbers row (now at y = -1)
+    // Numbers row
     "1": { x: 0, y: -1 },
     "2": { x: 1, y: -1 },
     "3": { x: 2, y: -1 },
@@ -57,31 +57,31 @@ export const KeyboardSignature = () => {
   const [name, setName] = useState("");
   const [currentKeyboardLayout] = useState<KeyboardLayout>("qwerty");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [curved, setCurved] = useState(false);
 
-  // visual constants (keep spacing consistent with your original)
-  const KEY_SPACING = 60; // gap between columns/rows (px)
-  const KEY_W = 56; // Tailwind w-14 -> 56px
-  const KEY_H = 48; // Tailwind h-12 -> 48px
-  const PAD_X = 15; // left/right padding inside the container
-  const PAD_Y = 15; // top/bottom padding inside the container
+  // visual constants
+  const KEY_SPACING = 60;
+  const KEY_W = 56;
+  const KEY_H = 48;
+  const PAD_X = 18;
+  const PAD_Y = 18;
 
   const layout = keyboardLayouts[currentKeyboardLayout];
   const all = Object.values(layout);
 
-  // derive bounds from the layout
+  // bounds
   const minX = Math.min(...all.map((k) => k.x));
   const maxX = Math.max(...all.map((k) => k.x));
   const minY = Math.min(...all.map((k) => k.y));
   const maxY = Math.max(...all.map((k) => k.y));
 
-  // shift keys so the smallest x/y lands at 0, then add padding
   const SHIFT_X = -minX * KEY_SPACING;
   const SHIFT_Y = -minY * KEY_SPACING;
 
-  // dynamic container dimensions
   const WIDTH = (maxX - minX) * KEY_SPACING + KEY_W + PAD_X * 2;
   const HEIGHT = (maxY - minY) * KEY_SPACING + KEY_H + PAD_Y * 2;
 
+  // keyboard flash when name changes
   useEffect(() => {
     if (name.length > 0) {
       setKeyboardVisible(true);
@@ -92,7 +92,7 @@ export const KeyboardSignature = () => {
     }
   }, [name]);
 
-  // map any character to its key center position (letters share coords A/a)
+  // map a character to the center of its key
   const getKeyCenter = (ch: string) => {
     if (!ch) return null;
     const isLetter = /[a-zA-Z]/.test(ch);
@@ -121,23 +121,53 @@ export const KeyboardSignature = () => {
     return "solid";
   };
 
+  // Build segments (straight or curved) depending on toggle
   const segments = useMemo(() => {
     if (!name) return [] as Array<{ d: string; style: SegmentStyle }>;
-    const centers = name.split("").map(getKeyCenter).filter(Boolean) as Array<{
+
+    const pts = name.split("").map(getKeyCenter).filter(Boolean) as Array<{
       x: number;
       y: number;
       ch: string;
     }>;
-    if (centers.length < 2) return [];
+
+    if (pts.length < 2) return [];
+
     const segs: Array<{ d: string; style: SegmentStyle }> = [];
-    for (let i = 1; i < centers.length; i++) {
-      const a = centers[i - 1];
-      const b = centers[i];
+
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
       const style = classifyStyle(a.ch, b.ch);
-      segs.push({ d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, style });
+
+      if (!curved) {
+        // straight segment
+        segs.push({ d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, style });
+      } else {
+        // quadratic segment with a gentle bend based on local turn
+        const prev = i - 2 >= 0 ? pts[i - 2] : a;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        // unit normal to segment
+        const nx = -dy / len;
+        const ny = dx / len;
+        // turn direction via cross product sign (prev->a) x (a->b)
+        const cprod =
+          (a.x - prev.x) * (b.y - a.y) - (a.y - prev.y) * (b.x - a.x);
+        const sign = cprod === 0 ? 1 : Math.sign(cprod);
+        // base amplitude proportional to segment length, clamped
+        const amp = Math.min(12, len * 0.22);
+        // control near the midpoint, offset along normal
+        const cx = (a.x + b.x) / 2 + nx * amp * sign;
+        const cy = (a.y + b.y) / 2 + ny * amp * sign;
+
+        segs.push({ d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`, style });
+      }
     }
+
     return segs;
-  }, [name, SHIFT_X, SHIFT_Y, PAD_X, PAD_Y]);
+  }, [name, curved, SHIFT_X, SHIFT_Y, PAD_X, PAD_Y]);
 
   const activeKeys = useMemo(() => {
     const mapped = name
@@ -178,7 +208,6 @@ ${segments.map(mk).join("\n")}
     const H = Math.ceil(HEIGHT);
 
     const canvas = document.createElement("canvas");
-    // 2x for crisper output
     canvas.width = W * 2;
     canvas.height = H * 2;
     const ctx = canvas.getContext("2d");
@@ -310,25 +339,38 @@ ${segments.map(mk).join("\n")}
             : "opacity-0 translate-y-2 duration-150"
         }`}
       >
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={exportSVG}
-            className="bg-white text-black px-3.5 py-1.5 origin-right rounded-md text-sm font-semibold cursor-pointer active:scale-98 active:brightness-70 hover:brightness-85 transition-all duration-100 ease-out"
-          >
-            Export SVG
-          </button>
-          <button
-            type="button"
-            onClick={exportPNG}
-            className="bg-white text-black px-3.5 py-1.5 origin-left rounded-md text-sm font-semibold cursor-pointer active:scale-98 active:brightness-70 hover:brightness-85 transition-all duration-100 ease-out"
-          >
-            Export PNG
-          </button>
+        {/* Controls */}
+        <div className="flex items-center justify-between gap-2">
+          <label className="inline-flex items-center gap-2 text-sm text-neutral-200 select-none">
+            <input
+              type="checkbox"
+              checked={curved}
+              onChange={(e) => setCurved(e.target.checked)}
+              className="h-4 w-4 accent-white cursor-pointer"
+            />
+            Curved lines
+          </label>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={exportSVG}
+              className="bg-white text-black px-3.5 py-1.5 origin-right rounded-md text-sm font-semibold cursor-pointer active:scale-98 active:brightness-70 hover:brightness-85 transition-all duration-100 ease-out"
+            >
+              Export SVG
+            </button>
+            <button
+              type="button"
+              onClick={exportPNG}
+              className="bg-white text-black px-3.5 py-1.5 origin-left rounded-md text-sm font-semibold cursor-pointer active:scale-98 active:brightness-70 hover:brightness-85 transition-all duration-100 ease-out"
+            >
+              Export PNG
+            </button>
+          </div>
         </div>
 
         <a
-          href="https://github.com/cnrad/keyboard-signature"
+          href="https://github.com/Chethan30/key-sign"
           target="_blank"
           rel="noreferrer noopener"
           className="font-medium text-neutral-500 border border-neutral-700/50 px-3.5 py-1.5 bg-neutral-900/50 text-sm rounded-md text-center hover:bg-neutral-900/75 hover:text-neutral-200 transition-all duration-100 ease-out"
