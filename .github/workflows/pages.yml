@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages Custom
+name: Deploy to GitHub Pages (sign.chethanbn.dev)
 
 on:
   push:
@@ -11,18 +11,16 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
@@ -30,18 +28,25 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Build (Next.js static export)
+      - name: Build (static export)
         run: npm run build
 
-      - name: Disable Jekyll on GitHub Pages
-        run: echo > out/.nojekyll
-
-      - name: Add CNAME for custom domain
+      - name: Disable Jekyll
         run: |
-          echo "sign.chethanbn.dev" > out/CNAME
+          mkdir -p out
+          touch out/.nojekyll
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Add CNAME
+        run: echo "sign.chethanbn.dev" > out/CNAME
+
+      - name: Verify export contents
+        run: |
+          test -d out || (echo "❌ out/ missing" && exit 1)
+          test -d out/_next/static || (echo "❌ out/_next/static missing (no CSS/JS). Did you export?" && exit 1)
+          echo "👍 out/_next/static present"
+          ls -la out/_next/static || true
+
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./out
 
