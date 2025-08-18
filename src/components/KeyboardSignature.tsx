@@ -1,56 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-
-type KeyboardLayout = "qwerty";
-type Key = { x: number; y: number };
-type Pt = { x: number; y: number; ch?: string };
-
-type PairClass = "UU" | "UL" | "LU" | "LL" | "NUM";
-
-// ----------------------- Layout -----------------------
-const keyboardLayouts: Record<KeyboardLayout, Record<string, Key>> = {
-  qwerty: {
-    "1": { x: 0, y: -1 },
-    "2": { x: 1, y: -1 },
-    "3": { x: 2, y: -1 },
-    "4": { x: 3, y: -1 },
-    "5": { x: 4, y: -1 },
-    "6": { x: 5, y: -1 },
-    "7": { x: 6, y: -1 },
-    "8": { x: 7, y: -1 },
-    "9": { x: 8, y: -1 },
-    "0": { x: 9, y: -1 },
-    _: { x: 10, y: -1 },
-
-    Q: { x: 0.5, y: 0 },
-    W: { x: 1.5, y: 0 },
-    E: { x: 2.5, y: 0 },
-    R: { x: 3.5, y: 0 },
-    T: { x: 4.5, y: 0 },
-    Y: { x: 5.5, y: 0 },
-    U: { x: 6.5, y: 0 },
-    I: { x: 7.5, y: 0 },
-    O: { x: 8.5, y: 0 },
-    P: { x: 9.5, y: 0 },
-
-    A: { x: 0.75, y: 1 },
-    S: { x: 1.75, y: 1 },
-    D: { x: 2.75, y: 1 },
-    F: { x: 3.75, y: 1 },
-    G: { x: 4.75, y: 1 },
-    H: { x: 5.75, y: 1 },
-    J: { x: 6.75, y: 1 },
-    K: { x: 7.75, y: 1 },
-    L: { x: 8.75, y: 1 },
-
-    Z: { x: 1.25, y: 2 },
-    X: { x: 2.25, y: 2 },
-    C: { x: 3.25, y: 2 },
-    V: { x: 4.25, y: 2 },
-    B: { x: 5.25, y: 2 },
-    N: { x: 6.25, y: 2 },
-    M: { x: 7.25, y: 2 },
-  },
-} as const;
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  KeyboardLayout,
+  CurveType,
+  generatePath,
+  getKeyboardLayout,
+} from "@/util/constants";
+import { AnimatePresence, motion } from "motion/react";
 
 // ----------------------- Small helpers -----------------------
 const isNumOrUnd = (c: string) => /[0-9_]/.test(c);
@@ -265,44 +220,30 @@ function escapeXml(s: string) {
 // ----------------------- Component -----------------------
 export const KeyboardSignature = () => {
   const [name, setName] = useState("");
-  const [currentKeyboardLayout] = useState<KeyboardLayout>("qwerty");
+  const [currentKeyboardLayout, setCurrentKeyboardLayout] =
+    useState<KeyboardLayout>(KeyboardLayout.QWERTY);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const [capsOn, setCapsOn] = useState(false);
+  const [curveType, setCurveType] = useState<CurveType>("linear");
+  const [optionsOpen, setOptionsOpen] = useState(true);
+  const [includeNumbers, setIncludeNumbers] = useState(false);
 
-  const [useCatmullRom, setUseCatmullRom] = useState(false);
-  const [useDashAlphabet, setUseDashAlphabet] = useState(true);
-
-  // Visual constants & bounds
-  const KEY_SPACING = 60,
-    KEY_W = 56,
-    KEY_H = 48,
-    PAD_X = 18,
-    PAD_Y = 18;
-  const layout = keyboardLayouts[currentKeyboardLayout];
-  const all = Object.values(layout);
-  const minX = Math.min(...all.map((k) => k.x));
-  const maxX = Math.max(...all.map((k) => k.x));
-  const minY = Math.min(...all.map((k) => k.y));
-  const maxY = Math.max(...all.map((k) => k.y));
-  const SHIFT_X = -minX * KEY_SPACING;
-  const SHIFT_Y = -minY * KEY_SPACING;
-  const WIDTH = (maxX - minX) * KEY_SPACING + KEY_W + PAD_X * 2;
-  const HEIGHT = (maxY - minY) * KEY_SPACING + KEY_H + PAD_Y * 2;
-
-  // Sync physical CapsLock
+  // Focus on input when user types
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const syncCaps = (e: KeyboardEvent) => {
-      if (typeof e.getModifierState === "function") {
-        setCapsOn(e.getModifierState("CapsLock"));
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isInputFocused = document.activeElement === inputRef.current;
+
+      if (!isInputFocused) {
+        const regex = includeNumbers ? /^[a-zA-Z0-9]$/ : /^[a-zA-Z]$/;
+        if (regex.test(e.key) || e.key === "Backspace") {
+          inputRef.current?.focus();
+        }
       }
     };
-    window.addEventListener("keydown", syncCaps);
-    window.addEventListener("keyup", syncCaps);
-    return () => {
-      window.removeEventListener("keydown", syncCaps);
-      window.removeEventListener("keyup", syncCaps);
-    };
-  }, []);
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [includeNumbers]);
 
   // Flash keyboard when name changes
   useEffect(() => {
@@ -313,97 +254,31 @@ export const KeyboardSignature = () => {
     } else {
       setKeyboardVisible(false);
     }
-  }, [name]);
+  }, [name, currentKeyboardLayout, includeNumbers]);
 
-  // Map char → key center (letters share coords via uppercase; keep original case in .ch)
-  const getKeyCenter = (ch: string): Pt | null => {
-    if (!ch) return null;
-    const isLetter = /[a-zA-Z]/.test(ch);
-    const key = (isLetter ? ch.toUpperCase() : ch) as keyof typeof layout;
-    if (!(key in layout)) return null;
-    const { x, y } = layout[key];
-    return {
-      x: x * KEY_SPACING + SHIFT_X + PAD_X + KEY_W / 2,
-      y: y * KEY_SPACING + SHIFT_Y + PAD_Y + KEY_H / 2,
-      ch,
-    };
-  };
+  // Calculate signature path
+  const signaturePath = useMemo(() => {
+    if (!name) return "";
 
-  // -------- Build segments (now with color + features for CODEC) --------
-  type RenderSeg = {
-    d: string;
-    dash?: number[];
-    color?: string;
-    feat: CodecSeg;
-  };
+    const points = [];
+    const currentLayout = getKeyboardLayout(
+      currentKeyboardLayout,
+      includeNumbers
+    );
 
-  const segments = useMemo(() => {
-    if (!name) return [] as RenderSeg[];
-    const rng = makeRng(`key-sign:${name}:${currentKeyboardLayout}`);
-
-    const pts = name.split("").map(getKeyCenter).filter(Boolean) as Pt[];
-    if (pts.length < 2) return [];
-
-    const segs: RenderSeg[] = [];
-
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p0 = i - 1 >= 0 ? pts[i - 1] : p1; // clamp ends
-      const p3 = i + 2 < pts.length ? pts[i + 2] : p2;
-
-      // length + direction (for color & codec)
-      const dx = p2.x - p1.x,
-        dy = p2.y - p1.y;
-      const segLen = Math.hypot(dx, dy);
-      const dir = direction8(dx, dy);
-      const lb = lengthBin(segLen);
-
-      const dash = useDashAlphabet
-        ? dashForPair(p1.ch!, p2.ch!, rng)
-        : legacyDash(p1.ch!, p2.ch!);
-      const color = colorForPair(p1.ch!, p2.ch!, segLen); // NEW: per-bigram color
-
-      const feat: CodecSeg = {
-        a: p1.ch!,
-        b: p2.ch!,
-        cls: classifyPair(p1.ch!, p2.ch!),
-        dir,
-        lb,
-      };
-
-      if (!useCatmullRom) {
-        segs.push({
-          d: `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`,
-          dash,
-          color,
-          feat,
-        });
-      } else {
-        const { c1x, c1y, c2x, c2y } = catmullRomCubicForSegment(
-          p0,
-          p1,
-          p2,
-          p3,
-          0
-        );
-        segs.push({
-          d: `M ${p1.x} ${p1.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${p2.x} ${p2.y}`,
-          dash,
-          color,
-          feat,
-        });
+    for (const char of name.toUpperCase()) {
+      if (char in currentLayout) {
+        const { x, y } = currentLayout[char];
+        const yOffset = includeNumbers ? 100 : 40;
+        points.push({ x: x * 60 + 28, y: y * 60 + yOffset });
       }
     }
 
-    return segs;
-  }, [
-    name,
-    currentKeyboardLayout,
-    getKeyCenter,
-    useDashAlphabet,
-    useCatmullRom,
-  ]);
+    if (points.length === 0) return "";
+
+    // SVG path
+    return generatePath(points, curveType);
+  }, [name, currentKeyboardLayout, curveType, includeNumbers]);
 
   // Build CODEC (NEW)
   const codec: Codec | null = useMemo(() => {
@@ -414,30 +289,28 @@ export const KeyboardSignature = () => {
 
   // Active keys for highlight
   const activeKeys = useMemo(() => {
-    const mapped = name
-      .split("")
-      .map((c) => (/[a-zA-Z]/.test(c) ? c.toUpperCase() : c))
-      .filter((c) => c in layout);
-    return new Set(mapped);
-  }, [name, layout]);
+    const currentLayout = getKeyboardLayout(
+      currentKeyboardLayout,
+      includeNumbers
+    );
+    return new Set(
+      name
+        .toUpperCase()
+        .split("")
+        .filter((char) => char in currentLayout)
+    );
+  }, [name, currentKeyboardLayout, includeNumbers]);
 
   // ----------------------- Exports -----------------------
   const exportSVG = () => {
-    if (segments.length === 0 || !name) return;
-    const mk = (s: RenderSeg) => {
-      const dashAttr =
-        s.dash && s.dash.length
-          ? ` stroke-dasharray="${s.dash.join(" ")}"`
-          : "";
-      const stroke = s.color ?? "black";
-      return `<path d="${s.d}" stroke="${stroke}" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"${dashAttr}/>`;
-    };
-    const svg = `<svg width="${Math.ceil(WIDTH)}" height="${Math.ceil(
-      HEIGHT
-    )}" xmlns="http://www.w3.org/2000/svg">
-${segments.map(mk).join("\n")}
-</svg>`;
-    const blob = new Blob([svg], { type: "image/svg+xml" });
+    if (!signaturePath || !name) return;
+
+    const height = includeNumbers ? 260 : 200;
+    const svgContent = `<svg width="650" height="${height}" xmlns="http://www.w3.org/2000/svg">
+          <path d="${signaturePath}" stroke="black" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>`;
+
+    const blob = new Blob([svgContent], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -447,17 +320,20 @@ ${segments.map(mk).join("\n")}
   };
 
   const exportPNG = () => {
-    if (segments.length === 0 || !name) return;
-    const W = Math.ceil(WIDTH),
-      H = Math.ceil(HEIGHT);
+    if (!signaturePath || !name) return;
+
+    const height = includeNumbers ? 260 : 200;
     const canvas = document.createElement("canvas");
-    canvas.width = W * 2;
-    canvas.height = H * 2;
+    canvas.width = 1300;
+    canvas.height = height * 2;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.scale(2, 2);
     ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, 650, height);
+
+    // Signature path
+    ctx.strokeStyle = "white";
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -517,6 +393,7 @@ ${segments.map(mk).join("\n")}
     <div className="flex flex-col sm:items-center sm:justify-center max-sm:mx-auto max-sm:w-[28rem] sm:w-fit">
       <input
         autoFocus
+        ref={inputRef}
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Enter your name"
@@ -533,37 +410,32 @@ ${segments.map(mk).join("\n")}
               ? "opacity-100 brightness-125 duration-50"
               : "opacity-0 duration-4000"
           }`}
-          style={{
-            width: `${Math.ceil(WIDTH)}px`,
-            height: `${Math.ceil(HEIGHT)}px`,
-          }}
+          style={{ width: "650px", height: includeNumbers ? "260px" : "200px" }}
         >
-          {Object.entries(layout).map(([char, pos]) => {
+          {Object.entries(
+            getKeyboardLayout(currentKeyboardLayout, includeNumbers)
+          ).map(([char, pos]) => {
             const isActive = activeKeys.has(char);
-            const lastChar = name.slice(-1);
             const isCurrentKey =
-              lastChar &&
-              (/[a-zA-Z]/.test(lastChar)
-                ? lastChar.toUpperCase()
-                : lastChar) === char;
+              name.length > 0 && name.toUpperCase()[name.length - 1] === char;
 
             return (
               <div
                 key={char}
-                onClick={() => setName((p) => p + clickCharToAppend(char))}
-                className={`absolute w-14 h-12 rounded-lg border flex items-center justify-center text-sm font-mono transition-all duration-200 active:scale-95 ${
+                onClick={() => setName((p) => p + char)}
+                className={`absolute w-14 h-12 rounded-lg border flex items-center justify-center text-sm font-mono transition-[transform,color,background-color,border-color] duration-200 active:scale-95 ${
                   isCurrentKey
-                    ? "bg-white/50 border-neutral-400 text-black shadow-lg shadow-white-500/50 scale-110"
+                    ? "bg-white/50 border-neutral-400 text-black scale-110"
                     : isActive
                     ? "bg-neutral-900 border-neutral-800 text-white"
                     : "bg-transparent border-neutral-800/50 text-neutral-300"
                 }`}
                 style={{
-                  left: `${pos.x * KEY_SPACING + SHIFT_X + PAD_X}px`,
-                  top: `${pos.y * KEY_SPACING + SHIFT_Y + PAD_Y}px`,
+                  left: `${pos.x * 60}px`,
+                  top: `${pos.y * 60 + (includeNumbers ? 75 : 15)}px`,
                 }}
               >
-                {renderKeyLabel(char)}
+                {char}
               </div>
             );
           })}
@@ -572,8 +444,8 @@ ${segments.map(mk).join("\n")}
         {/* Signature overlay */}
         <svg
           className="pointer-events-none absolute top-0 left-0"
-          width={Math.ceil(WIDTH)}
-          height={Math.ceil(HEIGHT)}
+          width="650"
+          height={includeNumbers ? "260" : "200"}
           style={{ zIndex: 10 }}
         >
           <title>Keyboard-derived signature path.</title>
@@ -596,10 +468,10 @@ ${segments.map(mk).join("\n")}
 
       {/* Controls */}
       <div
-        className={`max-sm:w-[20rem] max-sm:mx-auto flex flex-col gap-3 sm:mt-8 transition-all ease-in-out ${
+        className={`max-sm:w-[20rem] max-sm:mx-auto flex flex-col gap-2 sm:mt-8 transition-all ease-in-out ${
           name.length > 0
             ? "opacity-100 translate-y-0 duration-1000"
-            : "opacity-0 translate-y-2 duration-150"
+            : "pointer-events-none opacity-0 translate-y-2 duration-150"
         }`}
       >
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -717,11 +589,129 @@ ${segments.map(mk).join("\n")}
           href="https://github.com/Chethan30/key-sign"
           target="_blank"
           rel="noreferrer noopener"
-          className="font-medium text-neutral-500 border border-neutral-700/50 px-3.5 py-1.5 bg-neutral-900/50 text-sm rounded-md text-center hover:bg-neutral-900/75 hover:text-neutral-200 transition-all duration-100 ease-out"
+          className="font-medium text-neutral-500 border border-neutral-700/50 px-3.5 py-1.5 bg-neutral-900/50 text-sm rounded-md text-center active:scale-98 active:brightness-70 hover:brightness-85 transition-all duration-100 ease-out"
         >
           View on GitHub
         </a>
       </div>
+
+      <AnimatePresence>
+        {optionsOpen ? (
+          <motion.div
+            initial={{ y: 4, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 4, opacity: 0 }}
+            transition={{
+              duration: 0.4,
+              ease: [0.6, 1, 0.26, 1],
+            }}
+            className="flex flex-col items-start max-sm:-translate-x-1/2 max-sm:left-1/2 max-sm:w-[calc(100%-3rem)] sm:max-w-xs absolute sm:right-6 bottom-6 p-4 rounded-xl bg-neutral-950 border-neutral-800/50 border z-10"
+          >
+            <button
+              onClick={() => setOptionsOpen(false)}
+              className="text-sm text-neutral-600 hover:text-neutral-400 absolute right-4 top-4 cursor-pointer"
+            >
+              Close
+            </button>
+
+            <p className="font-semibold text-neutral-400 mb-4">Options</p>
+
+            <div className="grid grid-cols-[5rem_1fr] gap-y-4">
+              {/* Layout */}
+              <label
+                htmlFor="keyboard-layout"
+                className="text-neutral-300 text-sm font-medium mr-8 mt-1"
+              >
+                Layout
+              </label>
+              <select
+                id="keyboard-layout"
+                className="border border-neutral-800 rounded-md px-2 py-1 bg-neutral-900 text-white text-sm"
+                value={currentKeyboardLayout}
+                onChange={(e) => {
+                  setCurrentKeyboardLayout(e.target.value as KeyboardLayout);
+                }}
+              >
+                {Object.values(KeyboardLayout).map((layout) => (
+                  <option
+                    key={layout}
+                    value={layout}
+                    className="text-neutral-500"
+                  >
+                    {layout}
+                  </option>
+                ))}
+              </select>
+
+              {/* Curve */}
+              <p className="text-neutral-300 text-sm font-medium mr-8 mt-1">
+                Curve
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    "linear",
+                    "simple-curve",
+                    "quadratic-bezier",
+                    "cubic-bezier",
+                    "catmull-rom",
+                  ] as CurveType[]
+                ).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setCurveType(type)}
+                    className={`px-3 py-1 text-xs rounded-full transition-all duration-150 ease-out cursor-pointer border ${
+                      curveType === type
+                        ? "bg-white text-black font-medium border-white"
+                        : "bg-neutral-900/50 text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200 border-neutral-800"
+                    }`}
+                  >
+                    {type.replace("-", " ")}
+                  </button>
+                ))}
+              </div>
+
+              {/* Numbers Toggle */}
+              <p className="text-neutral-300 text-sm font-medium mr-8">
+                Numbers
+              </p>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeNumbers}
+                  onChange={(e) => setIncludeNumbers(e.target.checked)}
+                  className="sr-only"
+                />
+                <div
+                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${
+                    includeNumbers ? "bg-white" : "bg-neutral-700"
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 left-0.5 w-4 h-4 bg-black rounded-full transition-transform duration-200 ${
+                      includeNumbers ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </div>
+              </label>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.button
+            onClick={() => setOptionsOpen(true)}
+            className="absolute bottom-6 right-6 px-4 py-2 rounded-lg bg-neutral-950 border-neutral-800/50 border cursor-pointer text-sm font-medium text-neutral-200"
+            initial={{ y: -4, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -4, opacity: 0 }}
+            transition={{
+              duration: 0.4,
+              ease: [0.6, 1, 0.26, 1],
+            }}
+          >
+            Options
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
